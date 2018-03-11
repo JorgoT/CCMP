@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
 import java.security.Security;
@@ -35,37 +36,133 @@ public class CCMP {
 	static Cipher decrypt;
 	static SecretKeySpec secretKeySpec;
 
-	static class ClearTextFrame {
-		private byte[] frameHeader;
-		private byte[] data;
-		private byte[] PN;
+	static class FrameHeader {
+		byte[] PN;
+		byte[] SourceMAC;
+		byte[] QoS;
 
-		public ClearTextFrame() {
-			this.frameHeader = new byte[64];
-			random.nextBytes(this.frameHeader);
-			this.data = new byte[128];
-			random.nextBytes(this.data);
-			this.PN = new byte[16];
+		public FrameHeader() {
+			this.PN = new byte[6];
 			random.nextBytes(this.PN);
+
+			this.SourceMAC = new byte[6];
+			random.nextBytes(this.SourceMAC);
+
+			this.QoS = new byte[2];
+			random.nextBytes(this.QoS);
 		}
 
-		public ClearTextFrame(byte[] frameHeader, byte[] data, byte[] pN) {
-			this.frameHeader = frameHeader;
-			this.data = data;
-			PN = pN;
+		public FrameHeader(byte[] PN, byte[] SourceMAC, byte[] QoS) {
+			this.PN = Arrays.copyOf(PN, PN.length);
+			this.SourceMAC = Arrays.copyOf(SourceMAC, SourceMAC.length);
+			this.QoS = Arrays.copyOf(QoS, QoS.length);
+		}
+
+		@Override
+		public String toString() {
+			StringBuilder sb = new StringBuilder();
+
+			sb.append("FRAME HEADER : \n");
+			sb.append("    PN : " + new String(this.PN) + "\n");
+			sb.append("    SourceMAC : " + new String(this.SourceMAC) + "\n");
+			sb.append("    QoS : " + new String(this.QoS) + "\n");
+
+			return sb.toString();
+		}
+
+		public byte[] getBytesForCBC_IV() throws IOException, NoSuchAlgorithmException, NoSuchProviderException {
+			ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+
+			outputStream.write(this.PN);
+			outputStream.write(this.SourceMAC);
+			outputStream.write(this.QoS);
+
+			MessageDigest sha1 = MessageDigest.getInstance("SHA-1", "BC");
+
+			byte[] hash = new byte[sha1.getDigestLength()];
+
+			sha1.update(outputStream.toByteArray());
+			hash = sha1.digest();
+
+			return Arrays.copyOf(hash, 16);
+		}
+
+		public byte[] getBytesForCCM_IV() throws IOException {
+			ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+
+			outputStream.write(this.PN);
+			outputStream.write(this.SourceMAC);
+			outputStream.write(this.QoS);
+
+			return Arrays.copyOf(outputStream.toByteArray(), 13);
+		}
+
+		public byte[] getBytes() throws IOException {
+			ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+
+			outputStream.write(this.PN);
+			outputStream.write(this.SourceMAC);
+			outputStream.write(this.QoS);
+
+			return outputStream.toByteArray();
+		}
+
+		@Override
+		public int hashCode() {
+			final int prime = 31;
+			int result = 1;
+			result = prime * result + Arrays.hashCode(PN);
+			result = prime * result + Arrays.hashCode(QoS);
+			result = prime * result + Arrays.hashCode(SourceMAC);
+			return result;
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (this == obj)
+				return true;
+			if (obj == null)
+				return false;
+			if (getClass() != obj.getClass())
+				return false;
+			FrameHeader other = (FrameHeader) obj;
+			if (!Arrays.equals(PN, other.PN))
+				return false;
+			if (!Arrays.equals(QoS, other.QoS))
+				return false;
+			if (!Arrays.equals(SourceMAC, other.SourceMAC))
+				return false;
+			return true;
+		}
+
+	}
+
+	static class ClearTextFrame {
+		private FrameHeader frameHeader;
+		private byte[] data;
+
+		public ClearTextFrame() {
+			this.frameHeader = new FrameHeader();
+
+			this.data = new byte[128];
+			random.nextBytes(this.data);
+		}
+
+		public ClearTextFrame(FrameHeader frameHeader, byte[] data) {
+			this.frameHeader = new FrameHeader(frameHeader.PN, frameHeader.SourceMAC, frameHeader.QoS);
+			this.data = Arrays.copyOf(data, data.length);
 		}
 
 		public String toString() {
 			StringBuffer sb = new StringBuffer("");
 			sb.append("----------------------------------\n");
-			sb.append("FRAME HEADER  :  " + new String(this.frameHeader) + "\n");
+			sb.append(this.frameHeader.toString());
 			sb.append("DATA  :  " + new String(this.data) + "\n");
-			sb.append("PN  :  " + new String(this.PN) + "\n");
 			sb.append("----------------------------------\n");
 			return sb.toString();
 		}
 
-		public byte[] getFrameHeader() {
+		public FrameHeader getFrameHeader() {
 			return frameHeader;
 		}
 
@@ -73,17 +170,21 @@ public class CCMP {
 			return data;
 		}
 
-		public byte[] getPN() {
-			return PN;
-		}
-
 		public byte[] getBytesForMIC() throws IOException {
 			ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
-			outputStream.write(this.frameHeader);
+			outputStream.write(this.frameHeader.getBytes());
 			outputStream.write(this.data);
 
 			return outputStream.toByteArray();
+		}
+
+		public byte[] getBytesForCCM_IV() throws IOException {
+			return frameHeader.getBytesForCCM_IV();
+		}
+
+		public byte[] getBytesForCBC_IV() throws IOException, NoSuchAlgorithmException, NoSuchProviderException {
+			return frameHeader.getBytesForCBC_IV();
 		}
 
 		public byte[] getBytesForEncryption() throws IOException {
@@ -94,9 +195,8 @@ public class CCMP {
 		public int hashCode() {
 			final int prime = 31;
 			int result = 1;
-			result = prime * result + Arrays.hashCode(PN);
 			result = prime * result + Arrays.hashCode(data);
-			result = prime * result + Arrays.hashCode(frameHeader);
+			result = prime * result + ((frameHeader == null) ? 0 : frameHeader.hashCode());
 			return result;
 		}
 
@@ -109,11 +209,12 @@ public class CCMP {
 			if (getClass() != obj.getClass())
 				return false;
 			ClearTextFrame other = (ClearTextFrame) obj;
-			if (!Arrays.equals(PN, other.PN))
-				return false;
 			if (!Arrays.equals(data, other.data))
 				return false;
-			if (!Arrays.equals(frameHeader, other.frameHeader))
+			if (frameHeader == null) {
+				if (other.frameHeader != null)
+					return false;
+			} else if (!frameHeader.equals(other.frameHeader))
 				return false;
 			return true;
 		}
@@ -121,30 +222,27 @@ public class CCMP {
 	}
 
 	static class EncryptedFrame {
-		private byte[] frameHeader;
+		private FrameHeader frameHeader;
 		private byte[] data;
-		private byte[] PN;
 		private byte[] MIC;
 
-		public EncryptedFrame(byte[] frameHeader, byte[] data, byte[] PN, byte[] MIC) {
-			this.frameHeader = frameHeader;
+		public EncryptedFrame(FrameHeader frameHeader, byte[] data, byte[] MIC) {
+			this.frameHeader = new FrameHeader(frameHeader.PN, frameHeader.SourceMAC, frameHeader.QoS);
 			this.data = data;
-			this.PN = PN;
 			this.MIC = MIC;
 		}
 
 		public String toString() {
 			StringBuffer sb = new StringBuffer("");
 			sb.append("----------------------------------\n");
-			sb.append("FRAME HEADER  :  " + new String(this.frameHeader) + "\n");
+			sb.append(this.frameHeader.toString());
 			sb.append("DATA  :  " + new String(this.data) + "\n");
-			sb.append("PN  :  " + new String(this.PN) + "\n");
 			sb.append("MIC  :  " + new String(this.MIC) + "\n");
 			sb.append("----------------------------------\n");
 			return sb.toString();
 		}
 
-		public byte[] getFrameHeader() {
+		public FrameHeader getFrameHeader() {
 			return frameHeader;
 		}
 
@@ -152,12 +250,12 @@ public class CCMP {
 			return data;
 		}
 
-		public byte[] getPN() {
-			return PN;
-		}
-
 		public byte[] getMIC() {
 			return MIC;
+		}
+
+		public byte[] getBytesForCCM_IV() throws IOException {
+			return frameHeader.getBytesForCCM_IV();
 		}
 
 	}
@@ -179,11 +277,12 @@ public class CCMP {
 	}
 
 	// function for generating MIC
-	public static byte[] generateMIC(ClearTextFrame frame) throws InvalidKeyException,
-			InvalidAlgorithmParameterException, IllegalBlockSizeException, BadPaddingException, IOException {
+	public static byte[] generateMIC(ClearTextFrame frame)
+			throws InvalidKeyException, InvalidAlgorithmParameterException, IllegalBlockSizeException,
+			BadPaddingException, IOException, NoSuchAlgorithmException, NoSuchProviderException {
 
 		// set cipher mode
-		MICAES.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(frame.getPN()));
+		MICAES.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(frame.getBytesForCBC_IV()));
 
 		// encrypt frame
 		byte[] encrypted = MICAES.doFinal(frame.getBytesForMIC());
@@ -197,12 +296,12 @@ public class CCMP {
 	}
 
 	// ecnryption function
-	public static EncryptedFrame encryptFrame(ClearTextFrame frame) throws InvalidKeyException,
-			InvalidAlgorithmParameterException, IllegalBlockSizeException, BadPaddingException, IOException {
+	public static EncryptedFrame encryptFrame(ClearTextFrame frame)
+			throws InvalidKeyException, InvalidAlgorithmParameterException, IllegalBlockSizeException,
+			BadPaddingException, IOException, NoSuchAlgorithmException, NoSuchProviderException {
 
 		// set IV
-		byte[] IV = new byte[13];
-		System.arraycopy(frame.getPN(), 0, IV, 0, 13);
+		byte[] IV = frame.getBytesForCCM_IV();
 
 		// set encryption params
 		encrypt.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(IV));
@@ -231,18 +330,18 @@ public class CCMP {
 		System.arraycopy(encrypted, 128, encryptedMIC, 0, 8);
 
 		// generate the final encrypted frame
-		EncryptedFrame encryptedFrame = new EncryptedFrame(frame.frameHeader, encryptedData, frame.PN, encryptedMIC);
+		EncryptedFrame encryptedFrame = new EncryptedFrame(frame.frameHeader, encryptedData, encryptedMIC);
 
 		return encryptedFrame;
 	}
 
 	// decryption function
-	public static ClearTextFrame decryptFrame(EncryptedFrame frame) throws InvalidKeyException,
-			InvalidAlgorithmParameterException, IOException, IllegalBlockSizeException, BadPaddingException {
+	public static ClearTextFrame decryptFrame(EncryptedFrame frame)
+			throws InvalidKeyException, InvalidAlgorithmParameterException, IOException, IllegalBlockSizeException,
+			BadPaddingException, NoSuchAlgorithmException, NoSuchProviderException {
 
 		// set IV
-		byte[] IV = new byte[13];
-		System.arraycopy(frame.getPN(), 0, IV, 0, 13);
+		byte[] IV = frame.getBytesForCCM_IV();
 
 		// set encryption params
 		decrypt.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(IV));
@@ -271,10 +370,10 @@ public class CCMP {
 		System.arraycopy(decrypted, 128, decryptedMIC, 0, 8);
 
 		// generate the final decrypted frame
-		ClearTextFrame decryptedFrame = new ClearTextFrame(frame.getFrameHeader(), decryptedData, frame.getPN());
+		ClearTextFrame decryptedFrame = new ClearTextFrame(frame.getFrameHeader(), decryptedData);
 
 		System.out.println("RECIEVED MIC  :  " + Arrays.toString(decryptedMIC));
-		System.out.println("ORIGINAL MIC  :  " + Arrays.toString(generateMIC(decryptedFrame)));
+		System.out.println("CALCULATED MIC  :  " + Arrays.toString(generateMIC(decryptedFrame)));
 
 		return decryptedFrame;
 	}
