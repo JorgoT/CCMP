@@ -22,6 +22,7 @@ import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
+import org.bouncycastle.crypto.modes.CCMBlockCipher;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
 public class CCMP {
@@ -87,14 +88,21 @@ public class CCMP {
 			return Arrays.copyOf(hash, 16);
 		}
 
-		public byte[] getBytesForCCM_IV() throws IOException {
+		public byte[] getBytesForCCM_IV() throws IOException, NoSuchAlgorithmException, NoSuchProviderException {
 			ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
 			outputStream.write(this.PN);
 			outputStream.write(this.SourceMAC);
 			outputStream.write(this.QoS);
 
-			return Arrays.copyOf(outputStream.toByteArray(), 13);
+			MessageDigest sha1 = MessageDigest.getInstance("SHA-1", "BC");
+
+			byte[] hash = new byte[sha1.getDigestLength()];
+
+			sha1.update(outputStream.toByteArray());
+			hash = sha1.digest();
+
+			return Arrays.copyOf(hash, 13);
 		}
 
 		public byte[] getBytes() throws IOException {
@@ -179,7 +187,7 @@ public class CCMP {
 			return outputStream.toByteArray();
 		}
 
-		public byte[] getBytesForCCM_IV() throws IOException {
+		public byte[] getBytesForCCM_IV() throws IOException, NoSuchAlgorithmException, NoSuchProviderException {
 			return frameHeader.getBytesForCCM_IV();
 		}
 
@@ -237,7 +245,6 @@ public class CCMP {
 			sb.append("----------------------------------\n");
 			sb.append(this.frameHeader.toString());
 			sb.append("DATA  :  " + new String(this.data) + "\n");
-			sb.append("MIC  :  " + new String(this.MIC) + "\n");
 			sb.append("----------------------------------\n");
 			return sb.toString();
 		}
@@ -254,7 +261,7 @@ public class CCMP {
 			return MIC;
 		}
 
-		public byte[] getBytesForCCM_IV() throws IOException {
+		public byte[] getBytesForCCM_IV() throws IOException, NoSuchAlgorithmException, NoSuchProviderException {
 			return frameHeader.getBytesForCCM_IV();
 		}
 
@@ -306,31 +313,11 @@ public class CCMP {
 		// set encryption params
 		encrypt.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(IV));
 
-		// generate MIC
-		byte[] MIC = generateMIC(frame);
-
-		// get data from frame
-		byte[] data = frame.getBytesForEncryption();
-
-		// concatenate data and MIC for encryption
-		ArrayList<byte[]> arr = new ArrayList<byte[]>();
-		arr.add(data);
-		arr.add(MIC);
-		byte[] readyForEncryption = concatByteArrays(arr);
-
 		// encrypt
-		byte[] encrypted = encrypt.doFinal(readyForEncryption);
-
-		// extract data from cipher
-		byte[] encryptedData = new byte[128];
-		System.arraycopy(encrypted, 0, encryptedData, 0, 128);
-
-		// extract MIC from cipher
-		byte[] encryptedMIC = new byte[8];
-		System.arraycopy(encrypted, 128, encryptedMIC, 0, 8);
+		byte[] encrypted = encrypt.doFinal(frame.getData());
 
 		// generate the final encrypted frame
-		EncryptedFrame encryptedFrame = new EncryptedFrame(frame.frameHeader, encryptedData, encryptedMIC);
+		EncryptedFrame encryptedFrame = new EncryptedFrame(frame.frameHeader, encrypted, null);
 
 		return encryptedFrame;
 	}
@@ -346,33 +333,22 @@ public class CCMP {
 		// set encryption params
 		decrypt.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(IV));
 
-		// get MIC
-		byte[] MIC = frame.getMIC();
-
-		// get data from frame
-		byte[] data = frame.getData();
-
-		// concatenate data and MIC for decryption
-		ArrayList<byte[]> arr = new ArrayList<byte[]>();
-		arr.add(data);
-		arr.add(MIC);
-		byte[] readyForDecryption = concatByteArrays(arr);
-
 		// decrypt
-		byte[] decrypted = encrypt.doFinal(readyForDecryption);
+		byte[] decrypted = null;
 
-		// extract data from decrypted array
-		byte[] decryptedData = new byte[128];
-		System.arraycopy(decrypted, 0, decryptedData, 0, 128);
+		try {
+			decrypted = decrypt.doFinal(frame.getData());
+		} catch (javax.crypto.AEADBadTagException e) {
+			System.out.println("MIC check failed !!! ");
+		}
 
-		// extract MIC from decrypted array
-		byte[] decryptedMIC = new byte[8];
-		System.arraycopy(decrypted, 128, decryptedMIC, 0, 8);
+		// if MIC check fails return null
+		if (decrypted == null)
+			return null;
 
 		// generate the final decrypted frame
-		ClearTextFrame decryptedFrame = new ClearTextFrame(frame.getFrameHeader(), decryptedData);
+		ClearTextFrame decryptedFrame = new ClearTextFrame(frame.getFrameHeader(), decrypted);
 
-		System.out.println("RECIEVED MIC  :  " + Arrays.toString(decryptedMIC));
 		System.out.println("CALCULATED MIC  :  " + Arrays.toString(generateMIC(decryptedFrame)));
 
 		return decryptedFrame;
