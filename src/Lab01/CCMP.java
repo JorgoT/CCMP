@@ -22,7 +22,6 @@ import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
-import org.bouncycastle.crypto.modes.CCMBlockCipher;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
 public class CCMP {
@@ -232,12 +231,10 @@ public class CCMP {
 	static class EncryptedFrame {
 		private FrameHeader frameHeader;
 		private byte[] data;
-		private byte[] MIC;
 
-		public EncryptedFrame(FrameHeader frameHeader, byte[] data, byte[] MIC) {
+		public EncryptedFrame(FrameHeader frameHeader, byte[] data) {
 			this.frameHeader = new FrameHeader(frameHeader.PN, frameHeader.SourceMAC, frameHeader.QoS);
 			this.data = data;
-			this.MIC = MIC;
 		}
 
 		public String toString() {
@@ -255,10 +252,6 @@ public class CCMP {
 
 		public byte[] getData() {
 			return data;
-		}
-
-		public byte[] getMIC() {
-			return MIC;
 		}
 
 		public byte[] getBytesForCCM_IV() throws IOException, NoSuchAlgorithmException, NoSuchProviderException {
@@ -317,7 +310,7 @@ public class CCMP {
 		byte[] encrypted = encrypt.doFinal(frame.getData());
 
 		// generate the final encrypted frame
-		EncryptedFrame encryptedFrame = new EncryptedFrame(frame.frameHeader, encrypted, null);
+		EncryptedFrame encryptedFrame = new EncryptedFrame(frame.frameHeader, encrypted);
 
 		return encryptedFrame;
 	}
